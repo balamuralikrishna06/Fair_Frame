@@ -9,7 +9,8 @@ const AppState = {
         defaultMode: 'standard',
         notifications: true
     },
-    apiEndpoint: 'https://fair-frame-2k31.onrender.com/'
+    // ✅ CORRECT: Full API endpoint for file analysis
+    apiEndpoint: 'https://fair-frame-2k31.onrender.com/api/analyze'
 };
 
 // ==================== DOM ELEMENTS ====================
@@ -76,6 +77,7 @@ const elements = {
 // ==================== INITIALIZATION ====================
 function init() {
     console.log('🚀 FairFrame AI Initializing...');
+    console.log('API Endpoint:', AppState.apiEndpoint);
     
     // Load saved settings
     loadSettings();
@@ -170,6 +172,24 @@ function setupEventListeners() {
 }
 
 // ==================== FILE HANDLING ====================
+async function wakeUpBackend() {
+    console.log('Waking up backend server...');
+    
+    try {
+        // Ping the root endpoint to wake up the server
+        const response = await fetch('https://fair-frame-2k31.onrender.com/', {
+            method: 'GET',
+            mode: 'no-cors',
+            cache: 'no-cache'
+        });
+        console.log('Backend pinged successfully');
+        return true;
+    } catch (error) {
+        console.log('Wake-up ping failed:', error.message);
+        return false;
+    }
+}
+
 function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -212,7 +232,7 @@ function validateFile(file) {
     ];
     
     // Reduce max size for Render free tier
-    const maxSize = 50 * 1024 * 1024; // 50MB (reduced from 500MB)
+    const maxSize = 50 * 1024 * 1024; // 50MB
     
     if (!validTypes.includes(file.type)) {
         showToast(`Invalid file type: ${file.type}`, 'error');
@@ -280,26 +300,43 @@ async function startAnalysis() {
         const formData = new FormData();
         formData.append('file', AppState.currentFile);
         
-        // Show special message for Render free tier
-        showToast('Note: First request may take up to 50 seconds (Render free tier)', 'info');
+        // Special warning for Render free tier
+        showToast('⚠️ Render free tier: First request may take 50 seconds to wake up server', 'warning', 10000);
         
-        // Add timeout for Render free tier
+        // Try to wake up server first
+        await wakeUpBackend();
+        
+        // Increase timeout for Render (90 seconds)
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+        const timeoutId = setTimeout(() => {
+            controller.abort();
+            console.log('Request timed out after 90 seconds');
+        }, 90000);
+        
+        console.log('Sending request to:', AppState.apiEndpoint);
+        console.log('File:', AppState.currentFile.name, AppState.currentFile.size);
         
         const response = await fetch(AppState.apiEndpoint, {
             method: 'POST',
             body: formData,
-            signal: controller.signal
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json'
+            }
         });
         
         clearTimeout(timeoutId);
         
+        console.log('Response status:', response.status);
+        
         if (!response.ok) {
-            throw new Error(`API Error: ${response.status}`);
+            const errorText = await response.text();
+            console.error('Server error response:', errorText);
+            throw new Error(`Server error: ${response.status} - ${errorText}`);
         }
         
         const results = await response.json();
+        console.log('Analysis results:', results);
         
         if (results.success) {
             AppState.currentAnalysis = results;
@@ -307,7 +344,7 @@ async function startAnalysis() {
             hideLoading();
             showResults(results);
             showPage('results');
-            showToast('Analysis completed successfully!', 'success');
+            showToast('✅ Analysis completed successfully!', 'success');
         } else {
             throw new Error(results.error || 'Analysis failed');
         }
@@ -316,11 +353,13 @@ async function startAnalysis() {
         console.error('Analysis error:', error);
         hideLoading();
         
-        // Special handling for Render timeout
-        if (error.name === 'AbortError') {
-            showToast('Request timed out. Render free tier may be spinning up. Try again in 30 seconds.', 'error');
+        // User-friendly error messages
+        if (error.name === 'AbortError' || error.message.includes('timeout')) {
+            showToast('⏰ Request timed out. Render server is waking up (takes ~50s). Please wait 30 seconds and try again.', 'error', 10000);
+        } else if (error.message.includes('Failed to fetch')) {
+            showToast('🌐 Network error. The server might be starting up. Try again in 30 seconds.', 'error', 10000);
         } else {
-            showToast(`Analysis failed: ${error.message}`, 'error');
+            showToast(`❌ Analysis failed: ${error.message}`, 'error');
         }
     }
 }
@@ -660,7 +699,6 @@ function updateHistoryCount() {
 
 function viewHistoryItem(id) {
     showToast('Viewing historical analysis', 'info');
-    // In a real app, you would load the full analysis data here
 }
 
 function deleteHistoryItem(id) {
@@ -751,7 +789,6 @@ function exportReport() {
     }
     
     try {
-        // Create a downloadable JSON file
         const dataStr = JSON.stringify(AppState.currentAnalysis, null, 2);
         const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
         
@@ -811,38 +848,61 @@ function toggleFullscreen() {
 }
 
 async function checkApiConnection() {
-    // Always show as connected - Render free tier sleeps anyway
     const statusElement = document.getElementById('apiStatus');
     if (statusElement) {
-        statusElement.textContent = 'API Available';
-        statusElement.style.color = '#10b981';
-        statusElement.title = 'Backend: https://fair-frame-2k31.onrender.com';
+        statusElement.textContent = 'Checking...';
+        statusElement.style.color = '#f59e0b';
     }
     
-    // Test in background without showing errors
-    setTimeout(async () => {
-        try {
-            const response = await fetch('https://fair-frame-2k31.onrender.com/', {
-                method: 'GET',
-                mode: 'no-cors'  // Don't worry about CORS for this check
-            });
-            console.log('✅ Backend is reachable');
-        } catch (error) {
-            console.log('⚠️ Backend may be sleeping (Render free tier)');
+    try {
+        // Check root endpoint
+        const response = await fetch('https://fair-frame-2k31.onrender.com/', {
+            method: 'GET',
+            mode: 'cors',
+            cache: 'no-cache',
+            signal: AbortSignal.timeout(5000)
+        });
+        
+        if (response.ok) {
+            if (statusElement) {
+                statusElement.textContent = 'API Connected';
+                statusElement.style.color = '#10b981';
+                statusElement.title = 'Backend: https://fair-frame-2k31.onrender.com';
+            }
+            console.log('✅ API is connected');
+        } else {
+            if (statusElement) {
+                statusElement.textContent = 'API Status Unknown';
+                statusElement.style.color = '#f59e0b';
+            }
         }
-    }, 1000);
+    } catch (error) {
+        if (statusElement) {
+            statusElement.textContent = 'API May Be Sleeping';
+            statusElement.style.color = '#f59e0b';
+            statusElement.title = 'Render free tier - first request takes ~50s';
+        }
+        console.log('⚠️ API check failed (may be sleeping):', error.message);
+    }
 }
-function showToast(message, type = 'info') {
+
+function showToast(message, type = 'info', duration = 5000) {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    
+    let icon = 'fa-info-circle';
+    if (type === 'success') icon = 'fa-check-circle';
+    else if (type === 'error') icon = 'fa-exclamation-circle';
+    else if (type === 'warning') icon = 'fa-exclamation-triangle';
+    
     toast.innerHTML = `
-        <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i>
+        <i class="fas ${icon}"></i>
         <span>${message}</span>
     `;
     
     elements.toastContainer.appendChild(toast);
     
-    // Remove toast after 5 seconds
+    // Remove toast after duration
     setTimeout(() => {
         toast.style.animation = 'slideOutRight 0.3s ease';
         setTimeout(() => {
@@ -850,14 +910,13 @@ function showToast(message, type = 'info') {
                 toast.parentNode.removeChild(toast);
             }
         }, 300);
-    }, 5000);
+    }, duration);
 }
 
 // ==================== START APPLICATION ====================
-// Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', init);
 
-// Expose some functions to global scope for HTML onclick handlers
+// Expose functions to global scope
 window.reanalyzeFile = reanalyzeFile;
 window.exportReport = exportReport;
 window.shareAnalysis = shareAnalysis;
