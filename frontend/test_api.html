@@ -1,0 +1,28 @@
+<!-- test-api.html -->
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>Test API Connection</h2>
+    <button onclick="testAPI()">Test FairFrame API</button>
+    <div id="result"></div>
+    
+    <script>
+        async function testAPI() {
+            try {
+                const response = await fetch('http://localhost:8000/');
+                const data = await response.json();
+                document.getElementById('result').innerHTML = 
+                    `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+                console.log('✅ API is working!', data);
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    `<p style="color:red">❌ Error: ${error.message}</p>`;
+                console.error('❌ API error:', error);
+            }
+        }
+        
+        // Auto-test on load
+        window.onload = testAPI;
+    </script>
+</body>
+</html>
