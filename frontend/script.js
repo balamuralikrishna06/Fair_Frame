@@ -9,7 +9,7 @@ const AppState = {
         defaultMode: 'standard',
         notifications: true
     },
-    apiEndpoint: 'http://localhost:8001/api/analyze'
+    apiEndpoint: 'https://fair-frame-2k31.onrender.com/'
 };
 
 // ==================== DOM ELEMENTS ====================
@@ -211,7 +211,8 @@ function validateFile(file) {
         'audio/mpeg', 'audio/wav'
     ];
     
-    const maxSize = 500 * 1024 * 1024; // 500MB
+    // Reduce max size for Render free tier
+    const maxSize = 50 * 1024 * 1024; // 50MB (reduced from 500MB)
     
     if (!validTypes.includes(file.type)) {
         showToast(`Invalid file type: ${file.type}`, 'error');
@@ -219,7 +220,7 @@ function validateFile(file) {
     }
     
     if (file.size > maxSize) {
-        showToast('File too large (max 500MB)', 'error');
+        showToast(`File too large (max 50MB). Render free tier limitation.`, 'error');
         return false;
     }
     
@@ -279,17 +280,20 @@ async function startAnalysis() {
         const formData = new FormData();
         formData.append('file', AppState.currentFile);
         
-        // Add analysis options
-        const biasDetection = document.getElementById('optBias').checked;
-        const sentimentAnalysis = document.getElementById('optSentiment').checked;
+        // Show special message for Render free tier
+        showToast('Note: First request may take up to 50 seconds (Render free tier)', 'info');
         
-        if (biasDetection) formData.append('analyze_bias', 'true');
-        if (sentimentAnalysis) formData.append('analyze_sentiment', 'true');
+        // Add timeout for Render free tier
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
         
         const response = await fetch(AppState.apiEndpoint, {
             method: 'POST',
-            body: formData
+            body: formData,
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
         
         if (!response.ok) {
             throw new Error(`API Error: ${response.status}`);
@@ -311,7 +315,13 @@ async function startAnalysis() {
     } catch (error) {
         console.error('Analysis error:', error);
         hideLoading();
-        showToast(`Analysis failed: ${error.message}`, 'error');
+        
+        // Special handling for Render timeout
+        if (error.name === 'AbortError') {
+            showToast('Request timed out. Render free tier may be spinning up. Try again in 30 seconds.', 'error');
+        } else {
+            showToast(`Analysis failed: ${error.message}`, 'error');
+        }
     }
 }
 
@@ -802,15 +812,18 @@ function toggleFullscreen() {
 
 async function checkApiConnection() {
     try {
-        const response = await fetch(AppState.apiEndpoint.replace('/api/analyze', ''));
+        // Check health endpoint instead of root
+        const response = await fetch(AppState.apiEndpoint.replace('/api/analyze', '/health'));
         if (response.ok) {
             console.log('✅ API connected');
             document.getElementById('apiStatus').textContent = 'API Connected';
+            document.getElementById('apiStatus').style.color = '#10b981';
         }
     } catch (error) {
         console.log('⚠️ API not connected');
         document.getElementById('apiStatus').textContent = 'API Disconnected';
-        showToast('Backend API not connected. Make sure server is running.', 'error');
+        document.getElementById('apiStatus').style.color = '#ef4444';
+        showToast('Backend API not connected. First request may take 50 seconds.', 'warning');
     }
 }
 
